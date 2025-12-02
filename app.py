@@ -6,25 +6,32 @@ import pandas as pd
 # ==========================================
 # 1. PAGE CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Beam Studio Web", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Flexure Analysis", layout="wide", page_icon="🏗️")
 
 # Dark Theme adjustments for Matplotlib
 plt.style.use('dark_background')
 ST_BG_COLOR = "#0e1117"
+
+# Custom CSS to force the background color match
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {ST_BG_COLOR}; }}
     </style>
     """, unsafe_allow_html=True)
 
-# Graph Colors
-G_UDL_LINE = "#4fc3f7"
-G_UDL_FILL = "#03a9f4"
-G_UVL_LINE = "#ffb74d"
-G_UVL_FILL = "#ff9800"
+# Visual Constants
+C_BG_MAIN    = "#1e1e1e"
+G_BEAM       = "#9e9e9e"      # Concrete Grey
+G_SUP        = "#b0bec5"      # Support Steel
+G_POINT      = "#ff5252"      # Red Neon (Force)
+G_MOMENT     = "#d500f9"      # Purple Neon (Moment)
+G_UDL_LINE   = "#4fc3f7"      # Cyan Line
+G_UDL_FILL   = "#03a9f4"      # Cyan Fill
+G_UVL_LINE   = "#ffb74d"      # Orange Line
+G_UVL_FILL   = "#ff9800"      # Orange Fill
 
 # ==========================================
-# 2. SESSION STATE (Memory)
+# 2. SESSION STATE
 # ==========================================
 if 'loads' not in st.session_state:
     st.session_state.loads = []
@@ -33,8 +40,8 @@ if 'loads' not in st.session_state:
 # 3. SIDEBAR - CONTROLS
 # ==========================================
 with st.sidebar:
-    st.title("🏗️ Beam Studio")
-    st.caption("Professional Web Edition")
+    st.title("🏗️ Flexure")
+    st.caption("Professional Beam Analysis")
     
     st.header("1. Structure")
     beam_type = st.selectbox("Support Type", ["Simply Supported", "Cantilever"])
@@ -88,10 +95,9 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# 4. MAIN LOGIC ENGINE (Reused from your code)
+# 4. MATH ENGINE
 # ==========================================
 def solve_beam():
-    # Setup Reactions
     m_sum_about_A = 0 
     f_sum_vertical = 0
     
@@ -124,12 +130,11 @@ def solve_beam():
         Ma = m_sum_about_A
     else:
         denom = (SupB - SupA)
-        if denom == 0: denom = 0.0001 # Prevent div by zero
+        if denom == 0: denom = 0.0001
         Rb = m_sum_about_A / denom
         Ra = f_sum_vertical - Rb
         Ma = 0
 
-    # Method of Sections
     x_vals = np.linspace(0, L, 500)
     V_vals = []
     M_vals = []
@@ -137,13 +142,11 @@ def solve_beam():
     for x in x_vals:
         v = 0; m = 0
         
-        # Supports
         if x > SupA:
             v += Ra; m += Ra * (x - SupA) - Ma
         if beam_type != "Cantilever" and x > SupB:
             v += Rb; m += Rb * (x - SupB)
             
-        # Loads
         for l in st.session_state.loads:
             if l["type"] == "POINT" and x > l["loc"]:
                 v -= l["mag"]; m -= l["mag"] * (x - l["loc"])
@@ -168,11 +171,11 @@ def solve_beam():
     return x_vals, V_vals, M_vals, Ra, Rb, Ma
 
 # ==========================================
-# 5. VISUALIZATION
+# 5. GRAPHICS ENGINE
 # ==========================================
 x, V, M, Ra, Rb, Ma = solve_beam()
 
-# --- Top Section: Key Values ---
+# --- Top Key Values ---
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Reaction A", f"{Ra:.2f} kN")
 col2.metric("Reaction B", f"{Rb:.2f} kN")
@@ -180,34 +183,91 @@ max_m = max(M, key=abs) if M else 0
 col3.metric("Max Moment", f"{max_m:.2f} kNm")
 if Ma != 0: col4.metric("Wall Moment", f"{Ma:.2f} kNm")
 
-# --- Graphs ---
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+# --- PLOTTING ---
+# We create 3 subplots now: Beam Preview, SFD, BMD
+fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(10, 12), gridspec_kw={'height_ratios': [1, 1, 1]})
 fig.patch.set_facecolor(ST_BG_COLOR)
+plt.subplots_adjust(hspace=0.4)
 
-# SFD
+# --- 1. BEAM PREVIEW (Load Diagram) ---
+ax0.set_facecolor(ST_BG_COLOR)
+ax0.axis('off')
+ax0.set_title("Load Diagram (FBD)", color="white", fontsize=14)
+ax0.set_xlim(-L*0.1, L*1.1)
+ax0.set_ylim(-2.5, 5.0)
+
+# Draw Beam
+ax0.plot([0, L], [0, 0], color=G_BEAM, lw=6, solid_capstyle='round', zorder=2)
+
+# Draw Supports
+if beam_type == "Cantilever":
+    ax0.plot([SupA, SupA], [-1.5, 1.5], color=G_SUP, lw=6, zorder=1)
+else:
+    ax0.plot(SupA, -0.35, marker='^', markersize=14, color=G_SUP, mec=ST_BG_COLOR, zorder=3)
+    ax0.plot(SupB, -0.35, marker='o', markersize=12, color=G_SUP, mec=ST_BG_COLOR, zorder=3)
+
+# Draw Loads
+for l in st.session_state.loads:
+    if l["type"] == "POINT":
+        ax0.arrow(l["loc"], 2.0, 0, -1.6, head_width=L*0.025, length_includes_head=True, fc=G_POINT, ec=G_POINT, zorder=5)
+        ax0.text(l["loc"], 2.2, f"{l['mag']}kN", ha='center', color=G_POINT, fontweight='bold', fontsize=10)
+    
+    elif l["type"] == "MOMENT":
+        # Vector Rendered Moment
+        symbol = r"$\circlearrowright$" if l["mag"] >= 0 else r"$\circlearrowleft$"
+        ax0.text(l["loc"], 0, symbol, ha='center', va='center', color=G_MOMENT, fontsize=24, zorder=5)
+        ax0.text(l["loc"], 0.6, f"{l['mag']}kNm", ha='center', color=G_MOMENT, fontweight='bold', fontsize=10)
+        
+    elif l["type"] == "UDL":
+        ax0.fill_between([l["start"], l["end"]], 0.3, 1.0, color=G_UDL_FILL, alpha=0.3)
+        ax0.plot([l["start"], l["end"]], [1.0, 1.0], color=G_UDL_LINE, lw=2)
+        ax0.text((l["start"]+l["end"])/2, 1.2, f"{l['mag']} kN/m", ha='center', color=G_UDL_LINE, fontweight='bold', fontsize=10)
+        
+    elif l["type"] == "UVL":
+        h1 = 0.3 + (l["start_mag"]/50); h2 = 0.3 + (l["end_mag"]/50)
+        ax0.fill([l["start"], l["end"], l["end"], l["start"]], [0.3, 0.3, h2, h1], color=G_UVL_FILL, alpha=0.4)
+        mid = (l["start"]+l["end"])/2
+        ax0.text(mid, max(h1,h2)+0.2, f"{l['start_mag']}→{l['end_mag']}", ha='center', color=G_UVL_LINE, fontweight='bold', fontsize=10)
+
+# --- 2. SHEAR FORCE DIAGRAM (SFD) ---
 ax1.set_facecolor(ST_BG_COLOR)
 ax1.plot(x, V, color=G_UDL_LINE, lw=2)
 ax1.fill_between(x, V, 0, color=G_UDL_FILL, alpha=0.2)
-ax1.set_ylabel("Shear Force (kN)", color="white")
-ax1.set_title("Shear Force Diagram", color="white")
+ax1.set_ylabel("Shear (kN)", color="white")
+ax1.set_title("Shear Force Diagram", color="white", fontsize=14)
 ax1.tick_params(axis='x', colors='white')
 ax1.tick_params(axis='y', colors='white')
 ax1.grid(True, linestyle='--', alpha=0.3)
+ax1.spines['bottom'].set_color('white')
+ax1.spines['top'].set_color('#333')
+ax1.spines['left'].set_color('white')
+ax1.spines['right'].set_color('#333')
 
-# BMD
+# --- 3. BENDING MOMENT DIAGRAM (BMD) ---
 ax2.set_facecolor(ST_BG_COLOR)
 ax2.plot(x, M, color=G_UVL_LINE, lw=2)
 ax2.fill_between(x, M, 0, color=G_UVL_FILL, alpha=0.2)
-ax2.set_ylabel("Bending Moment (kNm)", color="white")
-ax2.set_title("Bending Moment Diagram", color="white")
+ax2.set_ylabel("Moment (kNm)", color="white")
+ax2.set_title("Bending Moment Diagram", color="white", fontsize=14)
 ax2.set_xlabel("Length (m)", color="white")
 ax2.tick_params(axis='x', colors='white')
 ax2.tick_params(axis='y', colors='white')
 ax2.grid(True, linestyle='--', alpha=0.3)
+ax2.spines['bottom'].set_color('white')
+ax2.spines['top'].set_color('#333')
+ax2.spines['left'].set_color('white')
+ax2.spines['right'].set_color('#333')
+
+# Mark Max Moment
+if M:
+    mx = max(M, key=abs)
+    mx_loc = x[np.argmax(np.abs(M))]
+    ax2.plot(mx_loc, mx, 'o', color='white', markersize=6)
+    ax2.text(mx_loc, mx, f" {mx:.2f}", color='white', fontsize=10, va='bottom')
 
 st.pyplot(fig)
 
 # --- CSV Download ---
 df = pd.DataFrame({"Length (m)": x, "Shear (kN)": V, "Moment (kNm)": M})
 csv = df.to_csv(index=False).encode('utf-8')
-st.download_button("Download Results CSV", csv, "beam_analysis.csv", "text/csv")
+st.download_button("Download Results CSV", csv, "flexure_analysis.csv", "text/csv")

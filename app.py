@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from fpdf import FPDF
-import base64
+import tempfile
+import os
 
 # ==========================================
 # 1. PAGE CONFIGURATION
@@ -54,7 +55,7 @@ if 'analyzed' not in st.session_state:
     st.session_state.analyzed = False
 
 # ==========================================
-# 3. PDF REPORT GENERATOR
+# 3. PDF REPORT GENERATOR (UPDATED FOR IMAGES)
 # ==========================================
 class PDF(FPDF):
     def header(self):
@@ -67,10 +68,12 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf(L, beam_type, loads, Ra, Rb, Ma, max_shear, max_moment):
+def generate_pdf(L, beam_type, loads, Ra, Rb, Ma, max_shear, max_moment, fig_preview, fig_graphs):
     pdf = PDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
+    
+    # --- PAGE 1: TEXT DATA ---
     
     # 1. System Properties
     pdf.set_font("Arial", 'B', 14)
@@ -85,13 +88,11 @@ def generate_pdf(L, beam_type, loads, Ra, Rb, Ma, max_shear, max_moment):
     pdf.cell(0, 10, "2. Applied Loads", 0, 1)
     pdf.set_font("Arial", size=10)
     
-    # Table Header
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(30, 8, "Type", 1, 0, 'C', 1)
     pdf.cell(40, 8, "Magnitude", 1, 0, 'C', 1)
     pdf.cell(40, 8, "Location/Range", 1, 1, 'C', 1)
     
-    # Table Rows
     pdf.set_font("Arial", size=10)
     for l in loads:
         type_str = l["type"]
@@ -120,7 +121,6 @@ def generate_pdf(L, beam_type, loads, Ra, Rb, Ma, max_shear, max_moment):
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "3. Equilibrium Results", 0, 1)
     pdf.set_font("Arial", size=12)
-    
     pdf.cell(0, 8, f"Vertical Reaction at A (Ra): {Ra:.3f} kN", 0, 1)
     pdf.cell(0, 8, f"Vertical Reaction at B (Rb): {Rb:.3f} kN", 0, 1)
     if Ma != 0:
@@ -137,7 +137,33 @@ def generate_pdf(L, beam_type, loads, Ra, Rb, Ma, max_shear, max_moment):
     pdf.cell(0, 8, f"Absolute Max Shear Force: {abs(max_shear):.3f} kN", 0, 1)
     pdf.cell(0, 8, f"Absolute Max Bending Moment: {abs(max_moment):.3f} kNm", 0, 1)
     pdf.set_text_color(0, 0, 0)
+
+    # --- PAGE 2: DIAGRAMS ---
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "5. Diagrams (FBD, SFD, BMD)", 0, 1)
     
+    # Save Matplotlib figures to temporary files
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile_preview:
+        fig_preview.savefig(tmpfile_preview.name, dpi=150, bbox_inches='tight', facecolor=C_BG_MAIN)
+        pdf.image(tmpfile_preview.name, x=10, y=30, w=190)
+        preview_path = tmpfile_preview.name
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile_graphs:
+        # We need to ensure the labels on axes are visible on white paper if desired, 
+        # or we keep the dark theme image.
+        # Ideally, we invert colors for print, but keeping dark theme for consistency here.
+        fig_graphs.savefig(tmpfile_graphs.name, dpi=150, bbox_inches='tight', facecolor=C_BG_MAIN)
+        pdf.image(tmpfile_graphs.name, x=10, y=90, w=190)
+        graphs_path = tmpfile_graphs.name
+
+    # Cleanup temp files
+    try:
+        os.remove(preview_path)
+        os.remove(graphs_path)
+    except:
+        pass
+
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
@@ -338,8 +364,8 @@ if st.session_state.analyzed:
     
     if Ma != 0: c4.metric("Wall Moment", f"{Ma:.2f} kNm")
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-    fig.patch.set_facecolor(ST_BG_COLOR)
+    fig_graphs, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    fig_graphs.patch.set_facecolor(ST_BG_COLOR)
     plt.subplots_adjust(hspace=0.4)
 
     ax1.set_facecolor(ST_BG_COLOR)
@@ -368,7 +394,7 @@ if st.session_state.analyzed:
         ax2.plot(mx_loc, mx, 'o', color='white', markersize=6)
         ax2.text(mx_loc, mx, f" {mx:.2f}", color='white', fontsize=10, va='bottom')
 
-    st.pyplot(fig)
+    st.pyplot(fig_graphs)
 
     # --- DOWNLOAD SECTION ---
     st.divider()
@@ -381,7 +407,8 @@ if st.session_state.analyzed:
     
     # 2. PDF Report Download
     max_shear = max(V, key=abs) if len(V) > 0 else 0
-    pdf_bytes = generate_pdf(L, beam_type, st.session_state.loads, Ra, Rb, Ma, max_shear, mx)
+    # Pass both figures to the generator
+    pdf_bytes = generate_pdf(L, beam_type, st.session_state.loads, Ra, Rb, Ma, max_shear, mx, fig_preview, fig_graphs)
     col_dl2.download_button("📄 Download PDF Report", pdf_bytes, "flexure_report.pdf", "application/pdf")
 
 else:
